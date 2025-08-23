@@ -1,0 +1,67 @@
+# MedGemma AI Platform - Complete Dependencies List
+# Copy this to requirements.txt or install individually
+
+# Core Web Framework
+streamlit>=1.28.0
+streamlit-chat>=0.1.1
+
+# Data Processing & Analysis
+numpy>=1.24.0
+pandas>=2.0.0
+scipy>=1.10.0
+
+# Machine Learning Core
+torch>=2.0.0
+torchvision>=0.15.0
+torchaudio>=2.0.0
+
+# Transformers & NLP
+transformers>=4.30.0
+tokenizers>=0.13.3
+datasets>=2.12.0
+accelerate>=0.20.0
+safetensors>=0.3.0
+
+# Parameter Efficient Fine-Tuning
+peft>=0.4.0
+trl>=0.4.7
+bitsandbytes>=0.39.0
+
+# Sentence Transformers & Embeddings
+sentence-transformers>=2.2.2
+faiss-cpu>=1.7.4
+
+# NVIDIA NeMo (Optional - for advanced capabilities)
+nemo-toolkit[all]>=1.19.0
+
+# Evaluation Metrics
+rouge-score>=0.1.2
+nltk>=3.8.1
+scikit-learn>=1.3.0
+evaluate>=0.4.0
+
+# Image Processing
+opencv-python>=4.8.0
+Pillow>=9.5.0
+matplotlib>=3.7.0
+
+# Visualization
+plotly>=5.15.0
+seaborn>=0.12.0
+
+# Web Scraping & Data Collection
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+trafilatura>=1.6.0
+
+# File Processing
+PyPDF2>=3.0.1
+pdfplumber>=0.9.0
+python-docx>=0.8.11
+
+# API Integration
+openai>=1.0.0
+huggingface-hub>=0.16.0
+
+# xAI Integration for Grok Models
+# (Install via pip install openai - compatible API)

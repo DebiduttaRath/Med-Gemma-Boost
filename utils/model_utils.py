@@ -7,7 +7,7 @@ import logging
 from typing import Tuple, Optional, Dict, Any
 import os
 from utils.fallbacks import HAS_TORCH, HAS_TRANSFORMERS, HAS_PEFT, get_model_and_tokenizer, FallbackModel, FallbackTokenizer
-from sentence_transformers import SentenceTransformer
+from utils.fallbacks import get_embedder, HAS_SENTENCE_TRANSFORMERS
 
 # Import available packages
 torch = None
@@ -41,46 +41,11 @@ logger = logging.getLogger(__name__)
 # ==================== UNIFIED MODEL LOADER ====================
 def get_unified_model_loader():
     """Get the appropriate model loader based on available dependencies"""
-    try:
-        # Try to use proper transformers first
-        from transformers import AutoTokenizer, AutoModelForCausalLM
-        from utils.fallbacks import HAS_TORCH
-        
-        def load_model_transformers(model_name: str):
-            """Load model using transformers"""
-            try:
-                tokenizer = AutoTokenizer.from_pretrained(model_name)
-                
-                if HAS_TORCH and torch is not None:
-                    model = AutoModelForCausalLM.from_pretrained(
-                        model_name,
-                        torch_dtype=torch.float16,
-                        device_map="auto",
-                        low_cpu_mem_usage=True
-                    )
-                else:
-                    model = AutoModelForCausalLM.from_pretrained(model_name)
-                
-                # Set padding token if missing
-                if hasattr(tokenizer, 'pad_token') and tokenizer.pad_token is None:
-                    tokenizer.pad_token = tokenizer.eos_token
-                    tokenizer.pad_token_id = tokenizer.eos_token_id
-                
-                return model, tokenizer
-                
-            except Exception as e:
-                logger.warning(f"Transformers loading failed: {e}, falling back")
-                return FallbackModel(model_name), FallbackTokenizer(model_name)
-        
-        return load_model_transformers
-        
-    except ImportError:
-        # Fallback to simple implementation
-        def load_model_fallback(model_name: str):
-            """Fallback model loading"""
-            return FallbackModel(model_name), FallbackTokenizer(model_name)
-        
-        return load_model_fallback
+    def load_model_unified(model_name: str):
+        """Unified model loading with fallback support"""
+        return get_model_and_tokenizer(model_name)
+    
+    return load_model_unified
 
 # Global model loader instance
 _model_loader = None

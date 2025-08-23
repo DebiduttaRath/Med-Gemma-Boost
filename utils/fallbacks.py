@@ -19,7 +19,7 @@ HAS_PEFT = False
 HAS_TRL = False
 HAS_DATASETS = False
 HAS_NLTK = False
-HAS_ROUGE = False
+HAS_ROUGE_SCORE = False
 HAS_NEMO = False
 
 
@@ -81,7 +81,7 @@ except ImportError:
 
 try:
     from rouge_score import rouge_scorer
-    HAS_ROUGE = True
+    HAS_ROUGE_SCORE = True
 except ImportError:
     logger.warning("Rouge Score not available - using fallback implementations")
 
@@ -359,7 +359,7 @@ def compute_rouge_fallback(prediction: str, reference: str) -> float:
 # Export availability flags
 __all__ = [
     'HAS_TORCH', 'HAS_TRANSFORMERS', 'HAS_SENTENCE_TRANSFORMERS', 'HAS_FAISS',
-    'HAS_PEFT', 'HAS_TRL', 'HAS_DATASETS', 'HAS_NLTK', 'HAS_ROUGE',
+    'HAS_PEFT', 'HAS_TRL', 'HAS_DATASETS', 'HAS_NLTK', 'HAS_ROUGE_SCORE',
     'get_embedder', 'get_faiss_index', 'normalize_l2', 'get_model_and_tokenizer',
     'compute_bleu_fallback', 'compute_rouge_fallback',
     'FallbackEmbedder', 'FallbackFAISS', 'FallbackTokenizer', 'FallbackModel'
