@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  medgemma-ai:
+    build: 
+      context: ..
+      dockerfile: deployment/Dockerfile
+    ports:
+      - "5000:5000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/medgemma
+      - PYTHONPATH=/app
+    depends_on:
+      - postgres
+    volumes:
+      - ../data:/app/data
+      - ../logs:/app/logs
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:15
+    environment:
+      - POSTGRES_DB=medgemma
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
