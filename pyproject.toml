@@ -5,9 +5,13 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "beautifulsoup4>=4.13.4",
+    "openai>=1.101.0",
+    "opencv-python>=4.12.0.88",
     "plotly>=6.3.0",
     "scikit-learn>=1.7.1",
     "streamlit>=1.48.1",
+    "trafilatura>=2.0.0",
 ]
 
 [[tool.uv.index]]

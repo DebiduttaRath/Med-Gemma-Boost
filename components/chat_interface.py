@@ -277,7 +277,54 @@ class ChatInterface:
             st.metric("🔍 RAG Status", "Active" if intel_stats["rag_enabled"] else "Basic")
         
         # AI Agent Model Selection
-        selected_model = healthcare_ai_agent.render_agent_interface()
+        try:
+            selected_model = healthcare_ai_agent.render_agent_interface()
+        except:
+            selected_model = "intelligent_fallback"
+        
+        # Model Selection with Grok and Latest Models
+        st.subheader("🤖 AI Model Selection")
+        
+        from utils.model_utils import get_model_info
+        available_models = [
+            "meta-llama/Llama-3-8b-instruct",
+            "xai-org/grok-1.5", 
+            "xai-org/grok-1",
+            "mistralai/Mistral-7B-Instruct-v0.3",
+            "microsoft/phi-3-mini-4k-instruct",
+            "microsoft/BioGPT",
+            "allenai/biomedlm",
+            "StanfordAIMI/MedAlpaca"
+        ]
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            selected_base_model = st.selectbox(
+                "Select AI Model:",
+                available_models,
+                index=0,
+                help="Choose the AI model for intelligent responses"
+            )
+            
+            # Display model info
+            model_info = get_model_info(selected_base_model)
+            st.info(f"💾 {model_info.get('size_gb', 'Unknown')} GB | 🧠 {model_info.get('context_length', 'Unknown')} context")
+            
+        with col2:
+            st.write("**🚀 Latest AI Models Available:**")
+            model_descriptions = {
+                "xai-org/grok-1.5": "🔥 Latest Grok - Extended 16K context",
+                "xai-org/grok-1": "⚡ Original Grok - Advanced reasoning",
+                "meta-llama/Llama-3-8b-instruct": "🦙 Llama 3 - High performance",
+                "microsoft/BioGPT": "🏥 Medical specialist",
+                "StanfordAIMI/MedAlpaca": "🩺 Medical training focus"
+            }
+            
+            if selected_base_model in model_descriptions:
+                st.success(model_descriptions[selected_base_model])
+            
+            # Store selected model
+            st.session_state.selected_base_model = selected_base_model
         
         # Chat configuration
         st.subheader("💬 Intelligent Chat Configuration")

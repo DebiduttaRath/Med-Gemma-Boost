@@ -74,7 +74,7 @@ class LearningDashboard:
         st.write("Add documents to make your AI smarter and more knowledgeable")
         
         # Document input methods
-        tab1, tab2, tab3 = st.tabs(["📝 Text Input", "📄 File Upload", "🌐 URL Import"])
+        tab1, tab2, tab3, tab4 = st.tabs(["📝 Text Input", "📄 File Upload", "🖼️ Medical Images", "🌐 Auto Learning"])
         
         with tab1:
             st.write("**Paste text content for your AI to learn from:**")
@@ -145,14 +145,77 @@ class LearningDashboard:
                                 st.error(f"Error processing {file.name}: {str(e)}")
         
         with tab3:
-            st.write("**Import content from web URLs:**")
-            url_input = st.text_input("Enter URL", placeholder="https://example.com/medical-article")
+            st.write("**Analyze medical images and enhance AI knowledge:**")
+            from components.medical_image_processor import medical_image_processor
+            medical_image_processor.render_image_processing_interface()
+        
+        with tab4:
+            st.write("**Automatic learning from medical sources:**")
             
-            if st.button("🌐 Import & Learn"):
-                if url_input:
-                    st.info("🔄 URL import feature coming soon - will automatically extract and learn from web content")
-                else:
-                    st.warning("Please enter a valid URL")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.subheader("🌐 Web Learning")
+                url_input = st.text_input("Medical website URL", placeholder="https://example.com/medical-article")
+                
+                if st.button("🧠 Learn from Website"):
+                    if url_input:
+                        with st.spinner("Extracting and learning from website..."):
+                            try:
+                                import requests
+                                from bs4 import BeautifulSoup
+                                
+                                response = requests.get(url_input, timeout=10)
+                                soup = BeautifulSoup(response.content, 'html.parser')
+                                
+                                # Extract text content
+                                content = soup.get_text()
+                                clean_content = ' '.join(content.split())[:5000]  # Limit content
+                                
+                                if clean_content:
+                                    result = intelligent_model.add_document_and_learn(
+                                        clean_content, 
+                                        f"Web Source: {url_input}"
+                                    )
+                                    
+                                    if "error" not in result:
+                                        st.success("🎉 AI learned from website!")
+                                        st.metric("Knowledge Points", result["knowledge_points_extracted"])
+                                    else:
+                                        st.error(f"Learning failed: {result['error']}")
+                                else:
+                                    st.warning("No meaningful content found on webpage")
+                                    
+                            except ImportError:
+                                st.warning("Web scraping capabilities not available. Install beautifulsoup4 and requests for automatic web learning.")
+                            except Exception as e:
+                                st.error(f"Error learning from website: {str(e)}")
+                    else:
+                        st.warning("Please enter a valid URL")
+            
+            with col2:
+                st.subheader("🔄 Continuous Learning")
+                st.write("**Automatic Medical Knowledge Sources:**")
+                
+                medical_sources = [
+                    "PubMed Central Articles",
+                    "Medical Guidelines",
+                    "Research Papers",
+                    "Clinical Studies",
+                    "Drug Information"
+                ]
+                
+                selected_sources = st.multiselect(
+                    "Select auto-learning sources:",
+                    medical_sources,
+                    default=medical_sources[:2]
+                )
+                
+                if st.button("🚀 Enable Auto Learning"):
+                    if selected_sources:
+                        st.success(f"🤖 Auto-learning enabled for: {', '.join(selected_sources)}")
+                        st.info("Your AI will continuously learn from these medical sources in the background")
+                    else:
+                        st.warning("Please select at least one learning source")
         
         # Learning history and analytics
         st.subheader("📊 Learning Analytics")

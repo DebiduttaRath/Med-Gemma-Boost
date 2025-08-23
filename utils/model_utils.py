@@ -177,6 +177,26 @@ def get_model_info(model_name: str) -> Dict[str, Any]:
             "context_length": 2048
         },
 
+        # --- Grok Models (Latest AI) ---
+        "xai-org/grok-1": {
+            "size_gb": 314,
+            "min_ram_gb": 128,
+            "recommended_ram_gb": 256,
+            "supports_4bit": True,
+            "supports_8bit": True,
+            "context_length": 8192,
+            "description": "Latest Grok model with advanced reasoning"
+        },
+        "xai-org/grok-1.5": {
+            "size_gb": 200,
+            "min_ram_gb": 64,
+            "recommended_ram_gb": 128,
+            "supports_4bit": True,
+            "supports_8bit": True,
+            "context_length": 16384,
+            "description": "Optimized Grok with extended context"
+        },
+
         # --- Medical / Domain-specific ---
         "microsoft/BioGPT": {
             "size_gb": 1.5,
