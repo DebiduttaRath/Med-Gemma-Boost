@@ -9,6 +9,19 @@ dependencies = [
     "plotly>=6.3.0",
     "scikit-learn>=1.7.1",
     "streamlit>=1.48.1",
+    "torch",
+    "transformers",
+    "sentence-transformers",
+    "faiss-cpu",
+    "peft",
+    "trl",
+    "datasets",
+    "rouge-score",
+    "nltk",
+    "accelerate",
+    "bitsandbytes",
+    "huggingface-hub",
+    "safetensors",
 ]
 
 [[tool.uv.index]]
