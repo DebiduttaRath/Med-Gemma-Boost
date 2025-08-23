@@ -24,6 +24,13 @@ peft>=0.4.0
 datasets>=2.0.0
 accelerate>=0.20.0
 
+# NVIDIA NeMo dependencies for AWS deployment
+nemo-toolkit[nlp]>=1.15.0
+omegaconf>=2.1.0
+hydra-core>=1.1.0
+pytorch-lightning>=1.8.0
+tensorboard>=2.8.0
+
 # Additional utilities
 requests>=2.32.5
 concurrent-futures>=3.1.1
