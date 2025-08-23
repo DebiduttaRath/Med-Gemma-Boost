@@ -23,6 +23,7 @@ from utils.fallbacks import (
     HAS_FAISS,
 )
 from components.nemo_rag import NeMoRAG  # 🔑 New import
+from components.database_manager import DatabaseManager
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +33,10 @@ class RAGSystem:
         self.embedder = None
         self.index = None
         self.passages = []
+        self.corpus = []
         self.index_path = "data/rag_index.faiss"
         self.meta_path = "data/rag_meta.pkl"
+        self.auto_updater = None
 
         # 🔑 Integrate NeMoRAG wrapper
         self.nemo_rag = NeMoRAG(self.settings)
@@ -222,9 +225,48 @@ class RAGSystem:
 
 
     # 🔽 render() remains identical except now retrieves via NeMoRAG
+    def auto_sync_with_database(self):
+        """Automatically sync RAG with database learned content"""
+        try:
+            with DatabaseManager() as db:
+                learned_data = db.get_learned_data(limit=500)
+                
+                if learned_data:
+                    new_content_added = False
+                    for data in learned_data:
+                        if data.quality_score >= 0.7:  # High quality threshold
+                            passage_id = f'db_{data.id}'
+                            
+                            # Check if not already in passages
+                            existing_ids = [p.get('id', '') for p in self.passages if isinstance(p, dict)]
+                            if passage_id not in existing_ids:
+                                self.passages.append({
+                                    'content': data.content,
+                                    'source': data.source_url or 'Auto-Learned',
+                                    'category': data.category,
+                                    'quality': data.quality_score,
+                                    'type': 'learned',
+                                    'id': passage_id
+                                })
+                                new_content_added = True
+                    
+                    if new_content_added:
+                        logger.info(f"Auto-synced new learned content with RAG system")
+                            
+        except Exception as e:
+            logger.warning(f"Failed to auto-sync with database: {e}")
+    
     def render(self):
-        """Render the RAG system interface"""
-        st.header("🔍 Retrieval-Augmented Generation System")
+        """Render the RAG system interface with auto-update"""
+        # Auto-sync with database on each render
+        self.auto_sync_with_database()
+        
+        st.header("🔍 Enhanced RAG System with Auto-Learning")
+        
+        # Show auto-sync status
+        learned_count = len([p for p in self.passages if isinstance(p, dict) and p.get('type') == 'learned'])
+        if learned_count > 0:
+            st.success(f"🤖 Auto-learned {learned_count} articles from web sources")
 
         # Backend selector synced with Settings + session_state
         st.subheader("🔽 RAG Backend Selection")
