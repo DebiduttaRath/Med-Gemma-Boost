@@ -2,6 +2,11 @@ import streamlit as st
 import os
 import logging
 from pathlib import Path
+import sys
+
+# Add project root to path
+project_root = Path(__file__).parent
+sys.path.append(str(project_root))
 
 # Import custom components
 from components.rag_system import RAGSystem
@@ -19,10 +24,39 @@ logger = logging.getLogger(__name__)
 # Initialize settings
 settings = Settings()
 
+def check_dependencies():
+    """Check and log available dependencies"""
+    from utils.fallbacks import (
+        HAS_TORCH, HAS_TRANSFORMERS, HAS_SENTENCE_TRANSFORMERS, 
+        HAS_FAISS, HAS_PEFT, HAS_NEMO
+    )
+    
+    logger.info(f"TORCH: {HAS_TORCH}")
+    logger.info(f"TRANSFORMERS: {HAS_TRANSFORMERS}")
+    logger.info(f"SENTENCE_TRANSFORMERS: {HAS_SENTENCE_TRANSFORMERS}")
+    logger.info(f"FAISS: {HAS_FAISS}")
+    logger.info(f"PEFT: {HAS_PEFT}")
+    logger.info(f"NEMO: {HAS_NEMO}")
+    
 def initialize_session_state():
     """Initialize session state variables"""
     if 'rag_system' not in st.session_state:
-        st.session_state.rag_system = None
+        st.session_state.rag_system = RAGSystem()
+
+    
+    if 'rag_initialized' not in st.session_state:
+        st.session_state.rag_initialized = False
+    
+    # Load existing index if available
+    if not st.session_state.rag_initialized:
+        rag_index_path = "data/rag_index.faiss"
+        rag_meta_path = "data/rag_meta.pkl"
+        
+        if (os.path.exists(rag_index_path) or os.path.exists(rag_index_path + ".fallback")) and os.path.exists(rag_meta_path):
+            if st.session_state.rag_system.load_index():
+                st.session_state.rag_initialized = True
+                logger.info("Loaded existing RAG index")
+                
     if 'model_trained' not in st.session_state:
         st.session_state.model_trained = False
     if 'current_model' not in st.session_state:
@@ -31,6 +65,9 @@ def initialize_session_state():
         st.session_state.safety_system = SafetySystem()
     if 'chat_history' not in st.session_state:
         st.session_state.chat_history = []
+    if 'rag_backend' not in st.session_state:
+        st.session_state.rag_backend = settings.RAG_BACKEND  # default from config
+
 
 def main():
     st.set_page_config(
@@ -39,7 +76,7 @@ def main():
         layout="wide",
         initial_sidebar_state="expanded"
     )
-    
+    check_dependencies()
     initialize_session_state()
     
     # Main title
@@ -65,6 +102,9 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.markdown("### System Status")
     
+    # Show active backend
+    st.sidebar.markdown(f"**RAG Backend:** {st.session_state.rag_backend.upper()}")
+
     # Check RAG system status
     rag_status = "✅ Ready" if st.session_state.rag_system else "❌ Not Initialized"
     st.sidebar.markdown(f"**RAG System:** {rag_status}")
@@ -97,6 +137,7 @@ def main():
     elif page == "💬 Chat Interface":
         chat_interface = ChatInterface()
         chat_interface.render()
+
 
 def show_dashboard():
     """Display main dashboard with system overview"""
@@ -195,6 +236,7 @@ Temperature: {settings.TEMPERATURE}
         st.code(f"""
 Embedding Model: {settings.EMBED_MODEL}
 Top-K Retrieval: {settings.RETRIEVAL_TOP_K}
+Backend: {st.session_state.rag_backend.upper()}
 Index Type: FAISS
         """)
 

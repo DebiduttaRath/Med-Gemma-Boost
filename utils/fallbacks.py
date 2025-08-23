@@ -20,6 +20,15 @@ HAS_TRL = False
 HAS_DATASETS = False
 HAS_NLTK = False
 HAS_ROUGE = False
+HAS_NEMO = False
+
+
+try:
+    import nemo.collections.nlp as nemo_nlp
+    HAS_NEMO = True
+except ImportError:
+    logger.warning("NVIDIA NeMo not available - using fallback implementations")
+
 
 # Try importing packages and set flags
 try:

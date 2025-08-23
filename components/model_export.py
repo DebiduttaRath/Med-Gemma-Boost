@@ -181,49 +181,49 @@ class ModelExport:
     def create_model_card(self, model_info: Dict[str, Any]) -> str:
         """Create a model card with metadata"""
         card_content = f"""
-# {model_info.get('model_name', 'Medical AI Model')}
+    # {model_info.get('model_name', 'Medical AI Model')}
 
-## Model Description
+    ## Model Description
 
-This is a fine-tuned medical AI model based on {model_info.get('base_model', 'Unknown')} for educational purposes.
+    This is a fine-tuned medical AI model based on {model_info.get('base_model', 'Unknown')} for educational purposes.
 
-## Training Details
+    ## Training Details
 
-- **Base Model**: {model_info.get('base_model', 'Unknown')}
-- **Training Data**: {model_info.get('training_examples', 0)} examples
-- **Fine-tuning Method**: LoRA (Low-Rank Adaptation)
-- **Training Date**: {model_info.get('training_date', 'Unknown')}
+    - **Base Model**: {model_info.get('base_model', 'Unknown')}
+    - **Training Data**: {model_info.get('training_examples', 0)} examples
+    - **Fine-tuning Method**: LoRA (Low-Rank Adaptation)
+    - **Training Date**: {model_info.get('training_date', 'Unknown')}
 
-## Performance Metrics
+    ## Performance Metrics
 
-{self.format_metrics(model_info.get('metrics', {}))}
+    {self.format_metrics(model_info.get('metrics', {}))}
 
-## Usage
+    ## Usage
 
-This model is intended for educational purposes only and should not be used for actual medical diagnosis or treatment recommendations.
+    This model is intended for educational purposes only and should not be used for actual medical diagnosis or treatment recommendations.
 
-```python
-from transformers import AutoTokenizer, AutoModelForCausalLM
-from peft import PeftModel
+    ```python
+    from transformers import AutoTokenizer, AutoModelForCausalLM
+    from peft import PeftModel
 
-# Load the model
-base_model = AutoModelForCausalLM.from_pretrained("{model_info.get('base_model', '')}")
-model = PeftModel.from_pretrained(base_model, "path/to/adapter")
-tokenizer = AutoTokenizer.from_pretrained("{model_info.get('base_model', '')}")
+    # Load the model
+    base_model = AutoModelForCausalLM.from_pretrained("{model_info.get('base_model', '')}")
+    model = PeftModel.from_pretrained(base_model, "path/to/adapter")
+    tokenizer = AutoTokenizer.from_pretrained("{model_info.get('base_model', '')}")
 
-# Generate response
-inputs = tokenizer("Your medical question here", return_tensors="pt")
-outputs = model.generate(**inputs, max_new_tokens=256)
-response = tokenizer.decode(outputs[0], skip_special_tokens=True)
-```
+    # Generate response
+    inputs = tokenizer("Your medical question here", return_tensors="pt")
+    outputs = model.generate(**inputs, max_new_tokens=256)
+    response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    ```
 
-## Safety Considerations
+    ## Safety Considerations
 
-⚠️ **Important**: This model is for educational purposes only. Do not use for actual medical diagnosis or treatment decisions.
+    ⚠️ **Important**: This model is for educational purposes only. Do not use for actual medical diagnosis or treatment decisions.
 
-## License
+    ## License
 
-Please refer to the base model's license for usage terms.
+    Please refer to the base model's license for usage terms.
         """
         return card_content.strip()
     

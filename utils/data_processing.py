@@ -26,6 +26,9 @@ def process_medical_documents(uploaded_file) -> List[Dict[str, Any]]:
         elif file_extension == '.csv':
             passages = process_csv_file(uploaded_file)
         elif file_extension == '.pdf':
+            # Validate PDF first
+            if not validate_pdf_file(uploaded_file):
+                st.warning("PDF file may be corrupted or invalid. Attempting to process anyway.")
             passages = process_pdf_file(uploaded_file)
         else:
             raise ValueError(f"Unsupported file format: {file_extension}")
@@ -35,6 +38,30 @@ def process_medical_documents(uploaded_file) -> List[Dict[str, Any]]:
         raise e
     
     return passages
+
+def validate_pdf_file(uploaded_file) -> bool:
+    """Validate PDF file before processing"""
+    try:
+        # Save current position
+        current_pos = uploaded_file.tell()
+        
+        # Check if file is a PDF by magic number
+        if uploaded_file.read(4) != b'%PDF':
+            uploaded_file.seek(current_pos)
+            return False
+        uploaded_file.seek(current_pos)
+        
+        # Try to read the PDF
+        import PyPDF2
+        pdf_reader = PyPDF2.PdfReader(uploaded_file)
+        if len(pdf_reader.pages) == 0:
+            uploaded_file.seek(current_pos)
+            return False
+            
+        uploaded_file.seek(current_pos)
+        return True
+    except Exception:
+        return False
 
 def process_text_file(uploaded_file) -> List[Dict[str, Any]]:
     """Process plain text files and split into passages"""
@@ -129,40 +156,126 @@ def process_csv_file(uploaded_file) -> List[Dict[str, Any]]:
     return passages
 
 def process_pdf_file(uploaded_file) -> List[Dict[str, Any]]:
-    """Process PDF files (basic text extraction)"""
+    """Process PDF files with robust error handling and fallback methods"""
+    passages = []
+    
     try:
-        import PyPDF2
-        
-        pdf_reader = PyPDF2.PdfReader(uploaded_file)
-        passages = []
-        
-        for page_num, page in enumerate(pdf_reader.pages):
-            text = page.extract_text()
+        # Method 1: Try PyPDF2 first
+        try:
+            import PyPDF2
+            uploaded_file.seek(0)  # Reset file pointer
+            pdf_reader = PyPDF2.PdfReader(uploaded_file)
             
-            # Split page text into paragraphs
-            paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
+            for page_num, page in enumerate(pdf_reader.pages):
+                try:
+                    text = page.extract_text()
+                    if text and text.strip():
+                        page_passages = extract_passages_from_text(
+                            text, uploaded_file.name, page_num, "pdf_file"
+                        )
+                        passages.extend(page_passages)
+                except Exception as page_error:
+                    logger.warning(f"Error extracting text from page {page_num}: {str(page_error)}")
+                    continue
+                    
+        except Exception as pdf_error:
+            logger.warning(f"PyPDF2 failed: {str(pdf_error)}")
+            # Reset file pointer for next attempt
+            uploaded_file.seek(0)
             
-            for para_idx, paragraph in enumerate(paragraphs):
-                if len(paragraph) > 100:  # Filter out headers/footers
-                    passages.append({
-                        "id": f"{uploaded_file.name}_page{page_num}_{para_idx}",
-                        "text": clean_text(paragraph),
-                        "source": uploaded_file.name,
-                        "metadata": {
-                            "type": "pdf_file",
-                            "page_number": page_num + 1,
-                            "paragraph_index": para_idx
-                        }
-                    })
-        
-        return passages
-        
-    except ImportError:
-        st.error("PyPDF2 library not available. Please install it to process PDF files.")
-        return []
+            # Method 2: Try pdfplumber if available
+            try:
+                import pdfplumber
+                with pdfplumber.open(uploaded_file) as pdf:
+                    for page_num, page in enumerate(pdf.pages):
+                        try:
+                            text = page.extract_text()
+                            if text and text.strip():
+                                page_passages = extract_passages_from_text(
+                                    text, uploaded_file.name, page_num, "pdf_file"
+                                )
+                                passages.extend(page_passages)
+                        except Exception as page_error:
+                            logger.warning(f"pdfplumber error on page {page_num}: {str(page_error)}")
+                            continue
+            except ImportError:
+                logger.warning("pdfplumber not available")
+            except Exception as plumber_error:
+                logger.error(f"pdfplumber also failed: {str(plumber_error)}")
+                
+        # If both methods failed, try a fallback approach
+        if not passages:
+            logger.info("Trying OCR fallback for PDF")
+            passages = try_ocr_fallback(uploaded_file)
+            
     except Exception as e:
-        logger.error(f"Error processing PDF: {str(e)}")
+        logger.error(f"Complete PDF processing failure: {str(e)}")
         return []
+    
+    return passages
+
+def extract_passages_from_text(text: str, filename: str, page_num: int, file_type: str) -> List[Dict[str, Any]]:
+    """Extract passages from text with proper cleaning"""
+    passages = []
+    
+    # Clean text first to prevent regex issues
+    text = clean_text(text)
+    
+    # Split text into paragraphs
+    paragraphs = [p.strip() for p in re.split(r'\n\s*\n', text) if p.strip()]
+    
+    for para_idx, paragraph in enumerate(paragraphs):
+        if len(paragraph) > 100:  # Filter out headers/footers/short fragments
+            passages.append({
+                "id": f"{filename}_page{page_num}_{para_idx}",
+                "text": paragraph,
+                "source": filename,
+                "metadata": {
+                    "type": file_type,
+                    "page_number": page_num + 1,
+                    "paragraph_index": para_idx,
+                    "length": len(paragraph)
+                }
+            })
+    
+    return passages
+
+def try_ocr_fallback(uploaded_file):
+    """Fallback method using OCR for image-based PDFs"""
+    passages = []
+    try:
+        # Check if OCR libraries are available
+        try:
+            import pytesseract
+            from PIL import Image
+            import io
+        except ImportError:
+            logger.error("OCR libraries not installed")
+            return passages
+            
+        # Try converting PDF to images and OCR
+        try:
+            from pdf2image import convert_from_bytes
+            uploaded_file.seek(0)
+            images = convert_from_bytes(uploaded_file.read())
+            
+            for page_num, image in enumerate(images):
+                text = pytesseract.image_to_string(image)
+                if text and text.strip():
+                    page_passages = extract_passages_from_text(
+                        text, uploaded_file.name, page_num, "pdf_file_ocr"
+                    )
+                    passages.extend(page_passages)
+                    
+        except ImportError:
+            logger.warning("pdf2image not available for OCR fallback")
+        except Exception as ocr_error:
+            logger.error(f"OCR failed: {str(ocr_error)}")
+            
+    except Exception as e:
+        logger.error(f"OCR fallback failed: {str(e)}")
+    
+    return passages
 
 def extract_passage_from_dict(data: Dict[str, Any], passage_id: str, source: str) -> Dict[str, Any]:
     """Extract passage from dictionary data"""
@@ -190,16 +303,22 @@ def extract_passage_from_dict(data: Dict[str, Any], passage_id: str, source: str
     }
 
 def clean_text(text: str) -> str:
-    """Clean and normalize text content"""
+    """Clean and normalize text content with robust handling"""
+    if not text:
+        return ""
+    
+    # First, replace problematic characters
+    text = re.sub(r'[\x00-\x08\x0B-\x0C\x0E-\x1F]', ' ', text)
+    
     # Remove excessive whitespace
     text = re.sub(r'\s+', ' ', text)
     
-    # Remove special characters that might interfere
-    text = re.sub(r'[^\w\s\.,!?;:()\[\]"\'%-]', '', text)
+    # Remove special characters that might interfere, but keep essential punctuation
+    text = re.sub(r'[^\w\s\.,!?;:()\[\]"\'%\-/]', '', text)
     
     # Normalize quotes
-    text = re.sub(r'[""]', '"', text)
-    text = re.sub(r'['']', "'", text)
+    text = re.sub(r'["″‟‟"]', '"', text)
+    text = re.sub(r'[''′‛‘’]', "'", text)
     
     return text.strip()
 

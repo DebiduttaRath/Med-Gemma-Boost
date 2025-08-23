@@ -217,9 +217,7 @@ class FineTuningInterface:
         with col1:
             model_name = st.selectbox(
                 "Base Model",
-                [
-                    "google/gemma-2b-it",
-                    "google/gemma-7b-it", 
+                [ 
                     "microsoft/DialoGPT-medium",
                     "microsoft/BioGPT",
                     "custom"

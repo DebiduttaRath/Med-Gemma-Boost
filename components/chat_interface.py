@@ -6,7 +6,8 @@ from typing import List, Dict, Any, Tuple, Optional
 from components.safety import SafetySystem
 from config.settings import Settings
 from utils.fallbacks import (
-    HAS_TORCH, HAS_TRANSFORMERS, get_model_and_tokenizer, 
+    HAS_TORCH, HAS_TRANSFORMERS, HAS_NEMO,
+    get_model_and_tokenizer, 
     FallbackModel, FallbackTokenizer
 )
 
@@ -37,36 +38,70 @@ class ChatInterface:
         self.chat_pipeline = None
         
     def load_model(self, model_name: str = None):
-        """Load model for chat inference"""
+        """Unified model loading"""
         if model_name is None:
             model_name = self.settings.BASE_MODEL
             
         try:
-            if self.model is None or self.tokenizer is None:
-                with st.spinner(f"Loading model {model_name}..."):
-                    self.model, self.tokenizer = get_model_and_tokenizer(model_name)
-                    
-                    # Add padding token if not present
-                    if hasattr(self.tokenizer, 'pad_token') and self.tokenizer.pad_token is None:
-                        self.tokenizer.pad_token = self.tokenizer.eos_token
-                    
-                    # Create pipeline if transformers is available
-                    if HAS_TRANSFORMERS and not isinstance(self.model, FallbackModel):
-                        self.chat_pipeline = pipeline(
-                            "text-generation",
-                            model=self.model,
-                            tokenizer=self.tokenizer,
-                            torch_dtype=torch.float16 if HAS_TORCH else None,
-                            device_map="auto"
-                        )
+            if self.model is None:
+                from utils.model_utils import load_base_model_unified
+                self.model, self.tokenizer = load_base_model_unified(model_name)
+                logger.info(f"Loaded {model_name} using unified loader")
+                
+                # Additional setup for existing functionality
+                if hasattr(self.tokenizer, 'pad_token') and self.tokenizer.pad_token is None:
+                    self.tokenizer.pad_token = self.tokenizer.eos_token
+                
+                if HAS_TRANSFORMERS and not isinstance(self.model, FallbackModel):
+                    self.chat_pipeline = pipeline(
+                        "text-generation",
+                        model=self.model,
+                        tokenizer=self.tokenizer,
+                        torch_dtype=torch.float16 if HAS_TORCH else None,
+                        device_map="auto"
+                    )
             return True
         except Exception as e:
-            logger.error(f"Error loading model: {str(e)}")
+            logger.error(f"Model loading failed: {e}")
             st.error(f"Error loading model: {str(e)}")
-            return False
+            
+            # Fallback to original approach if unified loading fails
+            try:
+                if self.model is None or self.tokenizer is None:
+                    with st.spinner(f"Loading model {model_name}..."):
+                        
+                        # ---- NeMo loader ----
+                        if "nvidia/" in model_name and HAS_NEMO:
+                            import nemo.collections.nlp as nemo_nlp
+                            from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
+                            self.model = MegatronGPTModel.from_pretrained(model_name)
+                            self.tokenizer = self.model.tokenizer
+                            logger.info(f"Loaded NeMo model: {model_name}")
+                        
+                        # ---- Default HuggingFace loader ----
+                        else:
+                            self.model, self.tokenizer = get_model_and_tokenizer(model_name)
+                            
+                            if hasattr(self.tokenizer, 'pad_token') and self.tokenizer.pad_token is None:
+                                self.tokenizer.pad_token = self.tokenizer.eos_token
+                            
+                            if HAS_TRANSFORMERS and not isinstance(self.model, FallbackModel):
+                                self.chat_pipeline = pipeline(
+                                    "text-generation",
+                                    model=self.model,
+                                    tokenizer=self.tokenizer,
+                                    torch_dtype=torch.float16 if HAS_TORCH else None,
+                                    device_map="auto"
+                                )
+                return True
+            except Exception as e2:
+                logger.error(f"Fallback model loading also failed: {e2}")
+                self.model = FallbackModel(model_name)
+                self.tokenizer = FallbackTokenizer(model_name)
+                return True
     
     def generate_response(self, question: str, context: str = "", max_tokens: int = None) -> str:
-        """Generate response using the loaded model"""
+        """Unified response generation"""
         if max_tokens is None:
             max_tokens = self.settings.MAX_NEW_TOKENS
             
@@ -74,106 +109,132 @@ class ChatInterface:
             if not self.load_model():
                 return "Error: Model not available. Please check model loading."
         
+        # Use the unified model interface
+        if hasattr(self.model, 'generate'):
+            # Proper transformer model
+            return self._generate_with_transformers(question, context, max_tokens)
+        else:
+            # Fallback model
+            return self._generate_with_fallback(question, context)
+    
+    def _generate_with_transformers(self, question: str, context: str, max_tokens: int) -> str:
+        """Generate with proper transformer model"""
+        # Safety check
+        is_safe, rule_triggered, safe_response = self.safety_system.check_input_safety(question)
+        if not is_safe:
+            return safe_response
+        
+        # Build messages with safety system
+        system_prompt = self.safety_system.get_safety_system_prompt()
+        
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Context: {context}\n\nQuestion: {question}"} if context else 
+            {"role": "user", "content": question}
+        ]
+        
+        # Apply chat template
+        if hasattr(self.tokenizer, 'apply_chat_template'):
+            prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        else:
+            prompt = f"{system_prompt}\n\nUser: {question}"
+            if context:
+                prompt = f"{system_prompt}\n\nContext: {context}\n\nQuestion: {question}"
+        
+        # Generate
+        inputs = self.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=2048)
+        
         try:
-            # Check input safety
-            is_safe, rule_triggered, safe_response = self.safety_system.check_input_safety(question)
-            if not is_safe:
-                return safe_response
+            if HAS_TORCH and hasattr(self.model, 'device'):
+                inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
             
-            # Prepare system prompt with safety guidelines
-            system_prompt = self.safety_system.get_safety_system_prompt()
-            
-            # Format the conversation
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Question: {question}\n\nContext: {context.strip()}" if context else f"Question: {question}"}
-            ]
-            
-            # Apply chat template
-            if hasattr(self.tokenizer, 'apply_chat_template'):
-                prompt = self.tokenizer.apply_chat_template(
-                    messages, 
-                    tokenize=False, 
-                    add_generation_prompt=True
+            if HAS_TORCH:
+                with torch.inference_mode():
+                    outputs = self.model.generate(
+                        **inputs,
+                        max_new_tokens=max_tokens,
+                        temperature=self.settings.TEMPERATURE,
+                        do_sample=True,
+                        top_p=0.9,
+                        repetition_penalty=1.1,
+                        pad_token_id=self.tokenizer.pad_token_id,
+                        eos_token_id=self.tokenizer.eos_token_id
+                    )
+            else:
+                outputs = self.model.generate(
+                    **inputs,
+                    max_new_tokens=max_tokens,
+                    temperature=self.settings.TEMPERATURE,
+                    do_sample=True,
+                    top_p=0.9,
+                    repetition_penalty=1.1,
+                    pad_token_id=getattr(self.tokenizer, 'pad_token_id', 0),
+                    eos_token_id=getattr(self.tokenizer, 'eos_token_id', 1)
                 )
-            else:
-                # Fallback prompt formatting
-                prompt = f"{system_prompt}\n\nUser: {question}"
-                if context:
-                    prompt += f"\n\nContext: {context}"
             
-            # Generate response
-            if isinstance(self.model, FallbackModel):
-                # Use fallback generation
-                response = f"I understand you're asking about: {question}. As an educational medical AI, I can provide general information, but please consult healthcare professionals for specific medical advice."
-            else:
-                inputs = self.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=2048)
-                
-                if HAS_TORCH and hasattr(self.model, 'device'):
-                    inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
-                
-                if HAS_TORCH:
-                    with torch.inference_mode():
-                        outputs = self.model.generate(
-                            **inputs,
-                            max_new_tokens=max_tokens,
-                            temperature=self.settings.TEMPERATURE,
-                            do_sample=True,
-                            top_p=0.9,
-                            top_k=50,
-                            repetition_penalty=1.1,
-                            eos_token_id=getattr(self.tokenizer, 'eos_token_id', 1),
-                            pad_token_id=getattr(self.tokenizer, 'pad_token_id', 0)
-                        )
+            # Decode
+            if hasattr(self.tokenizer, 'decode'):
+                if HAS_TORCH and hasattr(inputs, 'input_ids'):
+                    response = self.tokenizer.decode(
+                        outputs[0][inputs['input_ids'].shape[-1]:], 
+                        skip_special_tokens=True
+                    ).strip()
                 else:
-                    outputs = self.model.generate(inputs.get('input_ids', []), max_new_tokens=max_tokens)
-                
-                # Decode response
-                if hasattr(self.tokenizer, 'decode'):
-                    if HAS_TORCH and hasattr(inputs, 'input_ids'):
-                        response = self.tokenizer.decode(
-                            outputs[0][inputs['input_ids'].shape[-1]:], 
-                            skip_special_tokens=True
-                        ).strip()
-                    else:
-                        response = self.tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
-                else:
-                    response = f"Generated response for: {question}"
+                    response = self.tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
+            else:
+                response = f"Generated response for: {question}"
             
-            # Apply safety sanitization
-            response = self.safety_system.sanitize_response(response)
-            
-            return response
+            return self.safety_system.sanitize_response(response)
             
         except Exception as e:
             logger.error(f"Error generating response: {str(e)}")
             return f"Error generating response: {str(e)}"
     
+    def _generate_with_fallback(self, question: str, context: str) -> str:
+        """Generate with fallback model"""
+        # Safety check
+        is_safe, rule_triggered, safe_response = self.safety_system.check_input_safety(question)
+        if not is_safe:
+            return safe_response
+            
+        # Handle NeMo models
+        if "nvidia/" in self.settings.BASE_MODEL and HAS_NEMO:
+            system_prompt = self.safety_system.get_safety_system_prompt()
+            prompt = f"{system_prompt}\n\nUser: {question}"
+            if context:
+                prompt = f"{system_prompt}\n\nContext: {context}\n\nQuestion: {question}"
+            
+            try:
+                response = self.model.complete(prompt, tokens_to_generate=self.settings.MAX_NEW_TOKENS)
+                if isinstance(response, list):
+                    response = response[0] if response else ""
+                return self.safety_system.sanitize_response(response)
+            except Exception as e:
+                logger.error(f"NeMo generation error: {str(e)}")
+        
+        # Handle other fallback models
+        return f"I understand you're asking about: {question}. As an educational medical AI, I can provide general information, but please consult healthcare professionals for specific medical advice."
+    
     def generate_response_with_rag(self, question: str, context: str, rag_system) -> Tuple[str, List[Dict[str, Any]]]:
-        """Generate response using RAG system"""
+        """Generate response using RAG system (faiss | nemo | hybrid supported)"""
         try:
-            # Retrieve relevant documents
             retrieved_docs = rag_system.retrieve_documents(
                 question + (" " + context if context else ""), 
                 k=self.settings.RETRIEVAL_TOP_K
             )
             
-            # Format retrieved context
             if retrieved_docs:
                 retrieved_context = "\n\n".join([
                     f"[{i+1}] Source: {doc.get('source', 'unknown')}\n{doc['text'][:500]}..."
                     for i, doc in enumerate(retrieved_docs)
                 ])
-                
                 full_context = f"{context}\n\nRetrieved Information:\n{retrieved_context}" if context else f"Retrieved Information:\n{retrieved_context}"
             else:
                 full_context = context
                 retrieved_docs = []
             
-            # Generate response with enhanced context
             response = self.generate_response(question, full_context)
             
-            # Enforce citations if RAG was used
             if retrieved_docs:
                 response = self.safety_system.enforce_citation_format(response, retrieved_docs)
             
@@ -182,6 +243,7 @@ class ChatInterface:
         except Exception as e:
             logger.error(f"Error in RAG generation: {str(e)}")
             return f"Error in RAG generation: {str(e)}", []
+
     
     def format_chat_message(self, message: str, sender: str, timestamp: str = None) -> Dict[str, Any]:
         """Format a chat message for display"""
@@ -257,6 +319,8 @@ class ChatInterface:
         # Chat configuration
         st.subheader("Chat Configuration")
         
+        
+        
         col1, col2, col3 = st.columns(3)
         
         with col1:
@@ -314,33 +378,31 @@ class ChatInterface:
             else:
                 st.info("👋 Welcome! Ask me any medical question for educational purposes.")
         
-        # Chat input
-        with st.form("chat_form", clear_on_submit=True):
-            col1, col2 = st.columns([4, 1])
+        # Chat input - FIXED: Separate forms for input and buttons
+        with st.form("chat_input_form", clear_on_submit=True):
+            user_input = st.text_area(
+                "Your question:",
+                placeholder="Ask a medical question...",
+                height=120,  # Fixed: minimum 68px requirement
+                label_visibility="collapsed"
+            )
             
-            with col1:
-                user_input = st.text_area(
-                    "Your question:",
-                    placeholder="Ask a medical question...",
-                    height=100,
-                    label_visibility="collapsed"
-                )
-                
-                context_input = st.text_area(
-                    "Additional context (optional):",
-                    placeholder="Provide any relevant context or background information...",
-                    height=60,
-                    label_visibility="collapsed"
-                )
+            context_input = st.text_area(
+                "Additional context (optional):",
+                placeholder="Provide any relevant context or background information...",
+                height=100,  # Fixed: minimum 68px requirement
+                label_visibility="collapsed"
+            )
             
-            with col2:
-                st.write("")  # Spacing
-                submit_button = st.form_submit_button("Send", type="primary", use_container_width=True)
-                
-                clear_button = st.form_submit_button("Clear Chat", use_container_width=True)
+            # Submit button inside the form
+            submitted = st.form_submit_button("Send", type="primary", use_container_width=True)
+        
+        # Separate form for clear button to avoid conflicts
+        with st.form("chat_management_form"):
+            clear_submitted = st.form_submit_button("Clear Chat", use_container_width=True)
         
         # Process user input
-        if submit_button and user_input.strip():
+        if submitted and user_input.strip():
             if not self.model:
                 st.error("Please load a model first.")
                 return
@@ -389,7 +451,7 @@ class ChatInterface:
             st.rerun()
         
         # Clear conversation
-        if clear_button:
+        if clear_submitted:
             self.clear_conversation()
             st.rerun()
         
@@ -404,17 +466,17 @@ class ChatInterface:
                     self.analyze_conversation()
             
             with col2:
-                if st.button("💾 Save Conversation"):
-                    conversation_data = self.export_chat_session(st.session_state.current_conversation)
-                    st.download_button(
-                        label="Download Chat History",
-                        data=conversation_data,
-                        file_name=f"medical_chat_{int(time.time())}.json",
-                        mime="application/json"
-                    )
+                conversation_data = self.export_chat_session(st.session_state.current_conversation)
+                st.download_button(
+                    label="💾 Save Conversation",
+                    data=conversation_data,
+                    file_name=f"medical_chat_{int(time.time())}.json",
+                    mime="application/json",
+                    use_container_width=True
+                )
             
             with col3:
-                if st.button("🔄 New Conversation"):
+                if st.button("🔄 New Conversation", use_container_width=True):
                     self.clear_conversation()
                     st.rerun()
     

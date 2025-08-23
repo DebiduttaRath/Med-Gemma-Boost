@@ -9,7 +9,32 @@ class Settings:
     
     def __init__(self):
         # Model settings
-        self.BASE_MODEL = os.getenv("BASE_MODEL", "google/gemma-2b-it")
+        self.BASE_MODEL = os.getenv("BASE_MODEL", "microsoft/DialoGPT-medium")
+        # Allowed base models (OSS + NeMo-compatible)
+        self.ALLOWED_MODELS = [
+            "meta-llama/Llama-3-8b-instruct",
+            "meta-llama/Llama-3-70b-instruct",
+            "mistralai/Mistral-7B-Instruct-v0.3",
+            "mistralai/Mixtral-8x7B-Instruct-v0.1",
+            "microsoft/phi-3-mini-4k-instruct",
+            "tiiuae/falcon-7b-instruct",
+            "tiiuae/falcon-40b-instruct",
+            "microsoft/BioGPT",
+            "allenai/biomedlm",
+            "StanfordAIMI/MedAlpaca",
+            "nvidia/nemo-guardrails",        # Safety / governance
+            "nvidia/nv-embed-qa",            # RAG embedding
+            "nvidia/megatron-gpt-20b",       # GPT-style LM
+            "nvidia/megatron-gpt-530b",      # Very large LM
+            "nvidia/stt_en_conformer_transducer_large", # ASR
+            "nvidia/tts_en_fastpitch",       # TTS
+        ]
+        
+        # Reset BASE_MODEL if not valid
+        if self.BASE_MODEL not in self.ALLOWED_MODELS:
+            logger.warning(f"BASE_MODEL={self.BASE_MODEL} not in allowed models, defaulting to {self.ALLOWED_MODELS[0]}")
+            self.BASE_MODEL = self.ALLOWED_MODELS[0]
+            
         self.MAX_NEW_TOKENS = int(os.getenv("MAX_NEW_TOKENS", "256"))
         self.TEMPERATURE = float(os.getenv("TEMPERATURE", "0.7"))
         self.TOP_P = float(os.getenv("TOP_P", "0.9"))
@@ -21,6 +46,20 @@ class Settings:
         self.RETRIEVAL_TOP_K = int(os.getenv("RETRIEVAL_TOP_K", "3"))
         self.RETRIEVAL_THRESHOLD = float(os.getenv("RETRIEVAL_THRESHOLD", "0.7"))
         
+        # RAG backend selector: faiss | nemo | hybrid
+        self.RAG_BACKEND = os.getenv("RAG_BACKEND", "faiss").lower()
+        if self.RAG_BACKEND not in ["faiss", "nemo", "hybrid"]:
+            logger.warning(f"Unknown RAG_BACKEND={self.RAG_BACKEND}, defaulting to 'faiss'")
+            self.RAG_BACKEND = "faiss"
+
+        # NeMo specific configs (free/open-source defaults)
+        self.NEMO_MODEL = os.getenv("NEMO_MODEL", "nvidia/nemo-guardrails")  
+        self.NEMO_EMBED_MODEL = os.getenv("NEMO_EMBED_MODEL", "nvidia/nv-embed-qa")  
+        self.NEMO_TOP_K = int(os.getenv("NEMO_TOP_K", "5"))
+
+        # Hybrid configs
+        self.HYBRID_FUSION_METHOD = os.getenv("HYBRID_FUSION_METHOD", "reciprocal_rank_fusion")
+                
         # Fine-tuning settings
         self.LORA_R = int(os.getenv("LORA_R", "64"))
         self.LORA_ALPHA = int(os.getenv("LORA_ALPHA", "128"))
@@ -145,6 +184,21 @@ class Settings:
             "retrieval_threshold": self.RETRIEVAL_THRESHOLD,
         }
     
+    def get_rag_backend_config(self) -> Dict[str, Any]:
+        """Get active RAG backend configuration"""
+        return {
+            "backend": self.RAG_BACKEND,
+            "embed_model": self.NEMO_EMBED_MODEL if self.RAG_BACKEND == "nemo" else self.EMBED_MODEL,
+            "retrieval_top_k": self.NEMO_TOP_K if self.RAG_BACKEND == "nemo" else self.RETRIEVAL_TOP_K,
+            "retrieval_threshold": self.RETRIEVAL_THRESHOLD,
+            "nemo_model": self.NEMO_MODEL,
+            "nemo_embed_model": self.NEMO_EMBED_MODEL,
+            "nemo_top_k": self.NEMO_TOP_K,
+            "hybrid_fusion": self.HYBRID_FUSION_METHOD,
+        }
+
+
+
     def get_training_config(self) -> Dict[str, Any]:
         """Get training configuration dictionary"""
         return {
