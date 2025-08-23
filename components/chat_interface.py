@@ -7,19 +7,21 @@ from typing import List, Dict, Any, Tuple, Optional
 from components.safety import SafetySystem
 from config.settings import Settings
 
-# Import available packages - moved to avoid import errors
+# Import available packages safely
 torch = None
 pipeline = None
+HAS_TORCH = False
+HAS_TRANSFORMERS = False
 
 try:
-    if HAS_TORCH:
-        import torch
+    import torch
+    HAS_TORCH = True
 except ImportError:
     pass
 
 try:
-    if HAS_TRANSFORMERS:
-        from transformers import pipeline
+    from transformers import pipeline
+    HAS_TRANSFORMERS = True
 except ImportError:
     pass
 
@@ -249,8 +251,30 @@ class ChatInterface:
         if 'current_conversation' not in st.session_state:
             st.session_state.current_conversation = []
         
-        # Import and initialize AI agent
+        # Import and initialize intelligent model system
+        from components.intelligent_model import intelligent_model
         from components.ai_agent import healthcare_ai_agent
+        
+        # Initialize intelligent model if not already done
+        if 'intelligent_model_initialized' not in st.session_state:
+            if intelligent_model.initialize_model():
+                st.session_state.intelligent_model_initialized = True
+                st.success("🧠 Your intelligent healthcare model is ready!")
+            else:
+                st.session_state.intelligent_model_initialized = False
+        
+        # Display intelligence stats
+        intel_stats = intelligent_model.get_intelligence_stats()
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("📚 Documents Learned", intel_stats["total_documents"])
+        with col2:
+            st.metric("🧠 Knowledge Points", intel_stats["knowledge_points"])
+        with col3:
+            st.metric("🎓 Learning Sessions", intel_stats["learning_sessions"])
+        with col4:
+            st.metric("🔍 RAG Status", "Active" if intel_stats["rag_enabled"] else "Basic")
         
         # AI Agent Model Selection
         selected_model = healthcare_ai_agent.render_agent_interface()
@@ -361,15 +385,15 @@ class ChatInterface:
                 from components.ai_agent import healthcare_ai_agent
                 current_model = st.session_state.get('selected_ai_model', selected_model)
                 
-                if use_rag and st.session_state.rag_system:
-                    response, retrieved_docs = self.generate_response_with_rag(
-                        user_input, context_input, st.session_state.rag_system
-                    )
-                    # Enhance with AI agent intelligence
-                    response = healthcare_ai_agent.generate_intelligent_response(
-                        user_input, f"{context_input}\n\nRetrieved Information: {response}", current_model
+                # Use your own intelligent model with learning capabilities
+                from components.intelligent_model import intelligent_model
+                
+                if st.session_state.intelligent_model_initialized:
+                    response, retrieved_docs = intelligent_model.generate_intelligent_response(
+                        user_input, context_input
                     )
                 else:
+                    # Fallback to AI agent
                     response = healthcare_ai_agent.generate_intelligent_response(
                         user_input, context_input, current_model
                     )

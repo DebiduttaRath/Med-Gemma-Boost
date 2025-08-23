@@ -89,12 +89,13 @@ def main():
         "Select Module",
         [
             "🏠 Dashboard",
-            "🔍 RAG System",
+            "🧠 AI Learning",
+            "💬 Chat Interface",
+            "🔍 RAG System", 
             "🎯 Fine-tuning",
             "📊 Evaluation",
             "🛡️ Safety & Guardrails",
-            "📦 Model Export",
-            "💬 Chat Interface"
+            "📦 Model Export"
         ]
     )
     
@@ -120,6 +121,12 @@ def main():
     # Main content based on selected page
     if page == "🏠 Dashboard":
         show_dashboard()
+    elif page == "🧠 AI Learning":
+        from components.learning_dashboard import learning_dashboard
+        learning_dashboard.render()
+    elif page == "💬 Chat Interface":
+        chat_interface = ChatInterface()
+        chat_interface.render()
     elif page == "🔍 RAG System":
         rag_interface = RAGSystem()
         rag_interface.render()
@@ -134,9 +141,6 @@ def main():
     elif page == "📦 Model Export":
         export_interface = ModelExport()
         export_interface.render()
-    elif page == "💬 Chat Interface":
-        chat_interface = ChatInterface()
-        chat_interface.render()
 
 
 def show_dashboard():
