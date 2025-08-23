@@ -8,8 +8,8 @@ class Settings:
     """Application settings and configuration"""
     
     def __init__(self):
-        # Model settings
-        self.BASE_MODEL = os.getenv("BASE_MODEL", "microsoft/DialoGPT-medium")
+        # Model settings - Use best medical model as default
+        self.BASE_MODEL = os.getenv("BASE_MODEL", "meta-llama/Llama-3-8b-instruct")
         # Allowed base models (OSS + NeMo-compatible)
         self.ALLOWED_MODELS = [
             "meta-llama/Llama-3-8b-instruct",

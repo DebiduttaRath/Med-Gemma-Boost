@@ -309,15 +309,21 @@ class ChatInterface:
             st.session_state.current_conversation = []
     
     def render(self):
-        """Render the chat interface"""
+        """Render the enhanced chat interface with model selection"""
         st.header("💬 Medical AI Chat Interface")
         
         # Initialize session state
         if 'current_conversation' not in st.session_state:
             st.session_state.current_conversation = []
         
+        # Import and initialize AI agent
+        from components.ai_agent import healthcare_ai_agent
+        
+        # AI Agent Model Selection
+        selected_model = healthcare_ai_agent.render_agent_interface()
+        
         # Chat configuration
-        st.subheader("Chat Configuration")
+        st.subheader("💬 Intelligent Chat Configuration")
         
         
         
@@ -415,16 +421,26 @@ class ChatInterface:
             }
             st.session_state.current_conversation.append(user_msg)
             
-            # Generate response
-            with st.spinner("Generating response..."):
+            # Generate intelligent response
+            with st.spinner("🤖 AI Agent thinking..."):
                 start_time = time.time()
+                
+                # Use AI agent for intelligent response generation
+                from components.ai_agent import healthcare_ai_agent
+                current_model = st.session_state.get('selected_ai_model', selected_model)
                 
                 if use_rag and st.session_state.rag_system:
                     response, retrieved_docs = self.generate_response_with_rag(
                         user_input, context_input, st.session_state.rag_system
                     )
+                    # Enhance with AI agent intelligence
+                    response = healthcare_ai_agent.generate_intelligent_response(
+                        user_input, f"{context_input}\n\nRetrieved Information: {response}", current_model
+                    )
                 else:
-                    response = self.generate_response(user_input, context_input, max_tokens)
+                    response = healthcare_ai_agent.generate_intelligent_response(
+                        user_input, context_input, current_model
+                    )
                     retrieved_docs = []
                 
                 response_time = time.time() - start_time
