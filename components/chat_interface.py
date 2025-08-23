@@ -2,14 +2,10 @@ import streamlit as st
 import time
 import json
 import logging
+import os
 from typing import List, Dict, Any, Tuple, Optional
 from components.safety import SafetySystem
 from config.settings import Settings
-from utils.fallbacks import (
-    HAS_TORCH, HAS_TRANSFORMERS, HAS_NEMO,
-    get_model_and_tokenizer, 
-    FallbackModel, FallbackTokenizer
-)
 
 # Import available packages - moved to avoid import errors
 torch = None
@@ -38,84 +34,21 @@ class ChatInterface:
         self.chat_pipeline = None
         
     def load_model(self, model_name: str = None):
-        """Unified model loading"""
-        if model_name is None:
-            model_name = self.settings.BASE_MODEL
-            
-        try:
-            if self.model is None:
-                from utils.model_utils import load_base_model_unified
-                self.model, self.tokenizer = load_base_model_unified(model_name)
-                logger.info(f"Loaded {model_name} using unified loader")
-                
-                # Additional setup for existing functionality
-                if hasattr(self.tokenizer, 'pad_token') and self.tokenizer.pad_token is None:
-                    self.tokenizer.pad_token = self.tokenizer.eos_token
-                
-                if HAS_TRANSFORMERS and not isinstance(self.model, FallbackModel):
-                    self.chat_pipeline = pipeline(
-                        "text-generation",
-                        model=self.model,
-                        tokenizer=self.tokenizer,
-                        torch_dtype=torch.float16 if HAS_TORCH else None,
-                        device_map="auto"
-                    )
-            return True
-        except Exception as e:
-            logger.error(f"Model loading failed: {e}")
-            st.error(f"Error loading model: {str(e)}")
-            
-            # Fallback to original approach if unified loading fails
-            try:
-                if self.model is None or self.tokenizer is None:
-                    with st.spinner(f"Loading model {model_name}..."):
-                        
-                        # ---- NeMo loader ----
-                        if "nvidia/" in model_name and HAS_NEMO:
-                            import nemo.collections.nlp as nemo_nlp
-                            from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
-                            self.model = MegatronGPTModel.from_pretrained(model_name)
-                            self.tokenizer = self.model.tokenizer
-                            logger.info(f"Loaded NeMo model: {model_name}")
-                        
-                        # ---- Default HuggingFace loader ----
-                        else:
-                            self.model, self.tokenizer = get_model_and_tokenizer(model_name)
-                            
-                            if hasattr(self.tokenizer, 'pad_token') and self.tokenizer.pad_token is None:
-                                self.tokenizer.pad_token = self.tokenizer.eos_token
-                            
-                            if HAS_TRANSFORMERS and not isinstance(self.model, FallbackModel):
-                                self.chat_pipeline = pipeline(
-                                    "text-generation",
-                                    model=self.model,
-                                    tokenizer=self.tokenizer,
-                                    torch_dtype=torch.float16 if HAS_TORCH else None,
-                                    device_map="auto"
-                                )
-                return True
-            except Exception as e2:
-                logger.error(f"Fallback model loading also failed: {e2}")
-                self.model = FallbackModel(model_name)
-                self.tokenizer = FallbackTokenizer(model_name)
-                return True
+        """Simplified model loading - AI intelligence comes from external APIs"""
+        logger.info(f"AI Intelligence ready via external APIs")
+        self.model = "AI_AGENT_ENABLED"  # Marker that AI agent is ready
+        self.tokenizer = "AI_AGENT_ENABLED"
+        return True
     
     def generate_response(self, question: str, context: str = "", max_tokens: int = None) -> str:
-        """Unified response generation"""
-        if max_tokens is None:
-            max_tokens = self.settings.MAX_NEW_TOKENS
-            
-        if not self.model or not self.tokenizer:
-            if not self.load_model():
-                return "Error: Model not available. Please check model loading."
+        """Generate response using AI agent intelligence"""
+        from components.ai_agent import healthcare_ai_agent
         
-        # Use the unified model interface
-        if hasattr(self.model, 'generate'):
-            # Proper transformer model
-            return self._generate_with_transformers(question, context, max_tokens)
-        else:
-            # Fallback model
-            return self._generate_with_fallback(question, context)
+        if not self.model:
+            self.load_model()
+            
+        # Use AI agent for intelligent responses
+        return healthcare_ai_agent.generate_intelligent_response(question, context)
     
     def _generate_with_transformers(self, question: str, context: str, max_tokens: int) -> str:
         """Generate with proper transformer model"""
@@ -355,15 +288,17 @@ class ChatInterface:
                 step=0.1
             )
         
-        # Model status
-        if not self.model:
-            st.warning("⚠️ Model not loaded. Loading default model...")
-            if st.button("Load Model"):
-                if self.load_model():
-                    st.success("✅ Model loaded successfully!")
-                    st.rerun()
+        # AI Intelligence Status
+        xai_available = bool(os.getenv('XAI_API_KEY'))
+        openai_available = bool(os.getenv('OPENAI_API_KEY'))
+        
+        if xai_available:
+            st.success("🤖 ✅ xAI Grok Intelligence Active - ChatGPT/Grok-like responses enabled!")
+        elif openai_available:
+            st.success("🤖 ✅ OpenAI Intelligence Active - ChatGPT-like responses enabled!")
         else:
-            st.success("✅ Model ready for conversation")
+            st.info("🤖 💡 For full ChatGPT/Grok intelligence, add your API keys in Settings")
+            st.info("📝 Using intelligent medical AI fallback mode")
         
         # Main chat interface
         st.subheader("Conversation")
@@ -409,9 +344,6 @@ class ChatInterface:
         
         # Process user input
         if submitted and user_input.strip():
-            if not self.model:
-                st.error("Please load a model first.")
-                return
             
             # Add user message to conversation
             user_msg = {
