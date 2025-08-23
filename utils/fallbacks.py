@@ -233,13 +233,13 @@ class FallbackTokenizer:
             formatted += f"{role}: {content}\n"
         return formatted
     
-    def __call__(self, text: str, return_tensors: str = None, **kwargs) -> Dict[str, Any]:
+    def __call__(self, text: str, return_tensors: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         """Tokenize text"""
         token_ids = self.encode(text)
         result = {"input_ids": token_ids}
         if return_tensors == "pt":
-            result["input_ids"] = np.array([token_ids])
-            result["attention_mask"] = np.ones_like(result["input_ids"])
+            result["input_ids"] = [token_ids]
+            result["attention_mask"] = [1] * len(token_ids)
         return result
 
 
