@@ -1,0 +1,317 @@
+Hell yes — let’s supercharge MedGemma. 🚀 Below I’ll give a clear prioritized roadmap and *ready-to-drop-in* code snippets you can paste into your Colab/Notebook to move from a simple SFT LoRA workflow to a much more advanced, production-ready MedQA stack with:
+
+* Retrieval-Augmented Generation (RAG) — reduces hallucinations and grounds answers in documents
+* Stronger fine-tuning options (packing, better LoRA, mixed precision, longer training)
+* Evaluation suite (Exact Match, F1, calibration)
+* Safety / medical guardrails and citation formatting
+* Optional RLHF skeleton (PPO) & human-in-the-loop
+* Export + serving tips (merged weights, GGUF, local serving)
+
+I won’t ask questions — I’ll assume you want practical, copy-ready bits. If any step is too heavy for your GPU, ignore or reduce batch sizes / samples.
+
+---
+
+# 1) Priority roadmap (what to build, why)
+
+1. **RAG (high ROI)** — index trusted medical sources (MIRIAD passages, PubMed abstracts, guidelines) with embeddings + FAISS and prepend top-K retrieved passages to the prompt. Major reduction in hallucination and helps cite sources.
+2. **Better SFT config** — enable `packing=True`, proper bf16/fp16 based on device, increase LoRA `r`/alpha, larger effective batch via `gradient_accumulation_steps`, and more epochs.
+3. **Evaluation pipeline** — exact-match (EM), token-level F1 for QA, BLEU/ROUGE optional, plus calibration and confidence scoring.
+4. **Safety & citation formatting** — system prompt enforcing “educational only”, refuse personal medical advice, require citations from retrieved docs.
+5. **RLHF (optional, advanced)** — PPO-based reward trainer with a small reward model (for helpfulness + safety), human-in-the-loop for annotation.
+6. **Export & serve** — save LoRA adapters + merged fp16, convert to GGUF for local LLama CPP usage, or serve with text-generation-inference / vLLM.
+
+---
+
+# 2) RAG: embed documents + FAISS + retrieval + inference integration
+
+Add this cell (install packages if needed). This assumes you have a corpus of passages (e.g., MIRIAD passages or curated medical docs). It builds embeddings with `sentence-transformers`, indexes them in FAISS, and updates `chat()` to retrieve top-k and include them.
+
+```python
+# RAG setup: Install requirements (run once)
+!pip install sentence-transformers faiss-cpu  # or faiss-gpu if available
+
+# Build embeddings & FAISS index (run once; store index/embeddings on disk)
+from sentence_transformers import SentenceTransformer
+import faiss, numpy as np, os, json, pickle
+
+EMBED_MODEL = "all-mpnet-base-v2"  # high-quality embedder
+embedder = SentenceTransformer(EMBED_MODEL)
+
+# Suppose you have a list of passages: passages = [{"id":..., "text":..., "source":...}, ...]
+# Example: build from your dataset or load from file:
+# passages = [{"id": i, "text": row["passage_text"] or row["answer"], "source": "miriad"} for i,row in enumerate(raw)]
+
+def build_faiss_index(passages, index_path="rag_index.faiss", meta_path="rag_meta.pkl"):
+    texts = [p["text"] for p in passages]
+    embeddings = embedder.encode(texts, show_progress_bar=True, convert_to_numpy=True)
+    dim = embeddings.shape[1]
+    index = faiss.IndexFlatIP(dim)  # inner-product (cosine after normalizing)
+    faiss.normalize_L2(embeddings)
+    index.add(embeddings)
+    faiss.write_index(index, index_path)
+    with open(meta_path, "wb") as f:
+        pickle.dump(passages, f)
+    print("Saved index:", index_path, "meta:", meta_path)
+
+def load_faiss(index_path="rag_index.faiss", meta_path="rag_meta.pkl"):
+    index = faiss.read_index(index_path)
+    with open(meta_path, "rb") as f:
+        passages = pickle.load(f)
+    return index, passages
+
+# Retrieval helper
+def retrieve_top_k(query, k=3, index=None, passages=None):
+    q_emb = embedder.encode([query], convert_to_numpy=True)
+    faiss.normalize_L2(q_emb)
+    D, I = index.search(q_emb, k)
+    results = []
+    for idx in I[0]:
+        p = passages[idx]
+        results.append(p)
+    return results
+
+# Example usage after building index:
+# index, passages = load_faiss()
+# ctxs = retrieve_top_k("What causes elevated troponin?", k=3, index=index, passages=passages)
+# for c in ctxs: print(c["source"], c["text"][:200])
+```
+
+Now modify the `chat` function to include retrieved contexts and a citation block:
+
+```python
+def chat_rag(question, passage=None, max_new_tokens=256, temperature=0.2, k=3, index=None, passages=None):
+    # 1) retrieve
+    ctxs = retrieve_top_k(question + ((" " + (passage or "") ) if passage else ""), k=k, index=index, passages=passages)
+    # 2) compose retrieved block
+    retrieved_block = "\n\n".join([f"[{i+1}] Source: {c.get('source','unknown')}\n{c['text']}" for i,c in enumerate(ctxs)])
+    # 3) build messages
+    messages = [
+        {"role": "system", "content": "Educational only. Use retrieved sources; explicitly cite them as [1], [2] in your answer. Do not provide individualized medical advice."},
+        {"role": "user", "content": f"Question: {question}\n\nBackground: {(passage or '').strip()}\n\nRetrieved Documents:\n{retrieved_block}"},
+    ]
+    prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    inputs = tokenizer([prompt], return_tensors="pt").to(model.device)
+    with torch.inference_mode():
+        out = model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False, temperature=temperature, eos_token_id=tokenizer.eos_token_id)
+    text = tokenizer.batch_decode(out[:, inputs.input_ids.shape[-1]:], skip_special_tokens=True)[0].strip()
+    return text, ctxs
+```
+
+Drop this into your notebook, build the index from your available passages, and call `chat_rag(...)` instead of `chat(...)`. RAG is the single biggest practical gain for medical accuracy.
+
+---
+
+# 3) Improved SFT trainer config (packing + perf + LoRA tuning)
+
+Update SFTConfig to enable `packing=True`, correct bf16/fp16 flags, and use bigger LoRA (`r=128` or tune).
+
+```python
+from trl import SFTTrainer, SFTConfig
+
+sft_config = SFTConfig(
+    output_dir=output_dir,
+    per_device_train_batch_size=per_device_train_batch_size,
+    gradient_accumulation_steps=gradient_accumulation_steps,
+    num_train_epochs=max(1, num_train_epochs),  # increase if you want
+    learning_rate=learning_rate,
+    weight_decay=weight_decay,
+    logging_steps=logging_steps,
+    save_steps=save_steps,
+    save_total_limit=save_total_limit,
+    fp16=(torch_dtype==torch.float16),   # set True if model supports fp16
+    bf16=(torch_dtype==torch.bfloat16),
+    packing=True,                         # enable sequence packing
+    dataset_text_field="text",
+    report_to=["tensorboard"],
+    push_to_hub=push_to_hub,
+    hub_model_id=hub_model_id if push_to_hub else None,
+    dataset_num_proc=4,
+)
+
+trainer = SFTTrainer(
+    model=model,
+    tokenizer=tokenizer,
+    args=sft_config,
+    train_dataset=train_texts,
+    eval_dataset=eval_texts,
+)
+trainer.train()
+```
+
+LoRA hyperparams to try (experiment): `r=32/64/128`; increase `alpha` proportionally; `target_modules` set as before. Larger `r` = more capacity but uses more adapter params.
+
+---
+
+# 4) Evaluation: Exact Match (EM) & F1 for QA
+
+Add an evaluation cell that computes EM and token-level F1 between predicted and reference answers. This helps iterate quickly.
+
+```python
+import re
+from collections import Counter
+
+def normalize_answer(s):
+    s = s.lower()
+    s = re.sub(r'\b(a|an|the)\b', ' ', s)
+    s = re.sub(r'[^a-z0-9\s]', ' ', s)
+    s = ' '.join(s.split())
+    return s
+
+def f1_score(pred, gold):
+    pred_tokens = normalize_answer(pred).split()
+    gold_tokens = normalize_answer(gold).split()
+    if not pred_tokens or not gold_tokens:
+        return int(pred_tokens==gold_tokens)
+    common = Counter(pred_tokens) & Counter(gold_tokens)
+    num_same = sum(common.values())
+    if num_same == 0:
+        return 0.0
+    precision = num_same / len(pred_tokens)
+    recall = num_same / len(gold_tokens)
+    return 2 * precision * recall / (precision + recall)
+
+def exact_match(pred, gold):
+    return normalize_answer(pred) == normalize_answer(gold)
+
+# run batch evaluation on eval_texts (assumes original examples have 'answer' stored)
+results = []
+index, passages = None, None
+# if using RAG, load index/passages above
+# index, passages = load_faiss()
+
+for i in range(len(eval_ds)):
+    example = eval_ds[i]
+    q = example["question"]
+    ref = example["answer"]
+    pred, _ = chat_rag(q, passage=example.get("passage_text",""), index=index, passages=passages)  # or chat()
+    em = exact_match(pred, ref)
+    f1 = f1_score(pred, ref)
+    results.append({"em": em, "f1": f1, "pred": pred, "ref": ref})
+
+avg_em = 100 * sum(r["em"] for r in results)/len(results)
+avg_f1 = 100 * sum(r["f1"] for r in results)/len(results)
+print(f"Eval EM: {avg_em:.2f}%, F1: {avg_f1:.2f}%")
+```
+
+Store predictions + contexts to a CSV for human review.
+
+---
+
+# 5) Safety & citation formatting (prompt engineering)
+
+Use strict system messages and enforce citation style. Add refusal behavior for personal medical advice. Example system prompt:
+
+```
+SYSTEM:
+You are a medical-education assistant for research and learning. Do NOT provide personalised medical advice, diagnosis, or treatment. When you make claims, cite sources from the provided Retrieved Documents using numbered citations [1], [2]. If the information is uncertain, say "I may be mistaken" and recommend consulting a medical professional. Always provide short bullet-point answers and list cited sources at the end.
+```
+
+Inject this as the top system message in the `chat_rag` function. Also add a simple post-generation filter to block forbidden content (e.g., give instructions to escalate rather than providing treatment steps).
+
+---
+
+# 6) RLHF skeleton (PPO) — optional advanced step
+
+If you want to later add PPO-based reward tuning for helpfulness + safety, here is a minimal skeleton (requires human or automatic reward model). This is advanced and compute-heavy — treat as optional.
+
+```python
+# High-level sketch - requires TRL PPOTrainer and a reward model
+from trl import PPOTrainer, PPOConfig
+
+ppo_config = PPOConfig(
+    model_name=base_model_id,
+    steps=1000,
+    ppo_epochs=4,
+    batch_size=1,
+    forward_batch_size=1,
+)
+
+# reward function example (very simple): +1 if answer contains a citation token "[1]"
+def reward_fn(prompt, response):
+    return 1.0 if "[1]" in response else 0.0
+
+# create PPO trainer (this is a skeleton; real usage needs tokenization pipelines and dataset)
+# ppo_trainer = PPOTrainer(model=trainer.model, tokenizer=tokenizer, **ppo_config.__dict__)
+# for batch in ppo_dataset:  # human-labelled or synthetic dataset
+#     queries = batch['query']
+#     responses = ppo_trainer.generate(queries)
+#     rewards = [reward_fn(q, r) for q,r in zip(queries, responses)]
+#     ppo_trainer.step(queries, responses, rewards)
+```
+
+I’m giving a skeleton because PPO setup needs a reward model and careful safety checks. Use small runs first.
+
+---
+
+# 7) Export & serve: LoRA vs merged vs GGUF
+
+* **LoRA adapters**: small, great for option to merge at serve time. Already `trainer.save_model(output_dir)` does this.
+* **Merged fp16**: Use `model.save_pretrained_merged(MERGED_DIR, tokenizer, save_method="merged_16bit")` (you had that).
+* **GGUF**: You included convert steps using `llama.cpp` convert script — good for local inference with `ggml` backends.
+* **Serving**:
+
+  * For CPU/edge: `llama.cpp` / `ggml` (GGUF).
+  * For GPU/production: `text-generation-inference (TGI)`, `vLLM`, or Hugging Face Inference API. For large scale, build an HTTP endpoint that applies RAG at inference.
+
+Add a `metadata.json` or updated model card that documents dataset, eval metrics, and safety disclaimers — mandatory for responsible medical models.
+
+---
+
+# 8) CI / reproducibility / dataset versioning
+
+* Snapshot dataset with `huggingface_hub.snapshot_download` or store a manifest.
+* Save `pip freeze > requirements.txt` (or use `pip-tools` / conda env) and save training logs to the HF repo or cloud storage.
+* Add a reproducible `train.sh` with environment vars.
+
+---
+
+# 9) Quick combined notebook cell (paste after your existing cells)
+
+This cell wires RAG, updated trainer flags, and evaluation in a compact way. It’s a condensed integration — remove parts you already have to avoid duplication.
+
+```python
+# Compact integration snippet (RAG + packing + eval)
+# 1) build/load faiss index (assumes passages prepared)
+index_path, meta_path = "rag_index.faiss", "rag_meta.pkl"
+if not os.path.exists(index_path):
+    # build from raw passages list
+    passages = []
+    for i, row in enumerate(raw):  # 'raw' from load_dataset earlier
+        txt = (row.get("passage_text") or "") or row.get("answer") or row.get("question")
+        passages.append({"id": i, "text": txt, "source": "miriad"})
+    build_faiss_index(passages, index_path=index_path, meta_path=meta_path)
+
+index, passages = load_faiss(index_path, meta_path)
+
+# 2) ensure trainer has packing=True (see sft_config earlier)
+sft_config.packing = True
+
+# 3) train (or resume)
+trainer.train()
+
+# 4) quick eval on small slice
+eval_sample = eval_ds.select(range(min(50, len(eval_ds))))
+res = []
+for ex in eval_sample:
+    pred, ctxs = chat_rag(ex["question"], passage=ex.get("passage_text",""), index=index, passages=passages)
+    res.append({"q": ex["question"], "pred": pred, "ref": ex["answer"], "ctxs": [c["source"] for c in ctxs]})
+# compute EM/F1 (use functions above)
+ems = [exact_match(r["pred"], r["ref"]) for r in res]
+f1s = [f1_score(r["pred"], r["ref"]) for r in res]
+print("EM:", 100*sum(ems)/len(ems), "F1:", 100*sum(f1s)/len(f1s))
+```
+
+---
+
+# 10) Next steps I can do right now for you
+
+Pick any of the following and I’ll produce the full implementation immediately (no waiting):
+
+* A) **Full, runnable notebook patch**: I update your Colab notebook cells with the RAG pipeline, SFTConfig upgrades, evaluation suite, and PPO skeleton (I’ll output full cell contents ready to paste).
+* B) **RAG index builder + small curated PubMed ingestion script** (I’ll give code to scrape PubMed abstracts or ingest a CSV/TSV and index them).
+* C) **Complete evaluation/reporting dashboard**: CSV of failing cases, confusion analysis, and recommended human review list.
+* D) **RLHF PPO trainer**: a runnable small-scale PPO loop with a toy reward model and safety checks.
+
+Tell me which letter (A/B/C/D) to run with and I’ll drop the exact cells and files you can paste into the Colab. If you want me to just continue with the highest value (RAG + improved SFT + eval), I’ll proceed with A.
+
+Best Mind mode: engaged. 🔥 Which option do you want me to *do now*?
