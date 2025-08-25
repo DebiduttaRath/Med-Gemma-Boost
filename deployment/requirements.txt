@@ -33,5 +33,5 @@ tensorboard>=2.8.0
 
 # Additional utilities
 requests
-concurrent-futures>=3.1.1
+concurrent-futures
 python-dateutil>=2.9.0
